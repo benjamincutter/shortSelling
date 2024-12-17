@@ -103,3 +103,21 @@ portfolio_risk <- sqrt(t(optimal_weights) %*% monthly_cov_matrix %*% optimal_wei
 cat("\nPortfolio Return:", portfolio_return, "\n")
 cat("Portfolio Risk (Standard Deviation):", portfolio_risk, "\n")
 ```
+
+```{r}
+
+# Generate random portfolios
+w.GME <- seq(from=-2, to=1, by=.1)
+w.SPY <- 1 - w.GME
+mu.p <- w.GME * mean_monthly_returns["GME"] + w.SPY * mean_monthly_returns["SPY"]
+sigma2.p <- (w.GME^2) * monthly_variances["GME"] + (w.SPY^2) * monthly_variances["SPY"] + 2 * w.GME * w.SPY * monthly_cov_matrix["GME", "SPY"]
+sigma.p <- sqrt(sigma2.p)
+
+# Plot efficient frontier
+plot(sigma.p, mu.p, type = "b", col = "blue", pch = 16,
+     xlab = "Portfolio Risk (Standard Deviation)", 
+     ylab = "Portfolio Return", 
+     main = "Efficient Frontier with Short Selling"
+     )
+
+```
