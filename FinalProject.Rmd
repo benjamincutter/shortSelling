@@ -1,0 +1,105 @@
+---
+title: "Short Selling, Markowitz Portfolio Theory, and the GameStop Saga"
+author: "Ben Cutter & Liam Tolbert"
+date: "12/17/2024"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+require("knitr")
+# CHANGE ME
+sourcedir <-"/Users/bcutter/UVA/financialEngineering/finalProject"
+opts_knit$set(root.dir = sourcedir)
+
+# Load libraries
+library(quantmod)  # For stock data
+library(quadprog)  # For quadratic optimization
+library(tidyverse) # For data manipulation
+library(ggplot2)
+library(kableExtra)
+
+```
+
+
+# Introduction
+
+In this paper, we will look at how short selling is used, and its relationship to risk.  We will also investigate a recent extreme scenario of shorting, the GameStop short which resulted in a short squeeze.  Our investigation of short selling will be grounded in Markowitz Portfolio theory and the benefits that short selling can bring to a portfolio.  We will conclude the paper with an ethical perspective of targeted short selling, and some of the legal changes that have been introduced to the system.
+
+
+# Initial Data
+
+Throughout this paper, we will be using GameStop (GME) stock to provide a real world example of how Markowitz Portfolio Theory can be applied.  Since it’s difficult to complete a Markowitz theory with only a single stock, a fairly stable stock, SPY, is chosen as a second investment option in the portfolio.  Since a goal of this paper is to show how the GameStop short squeeze would impact a portfolio with a GME stock, we will use historical data from January 2019 - December 2019 to create our returns and variances for the stocks used.  For GME and SPY, this is what our values look like:
+
+```{r}
+# Fetch GME and SPY data for 2019
+getSymbols(c("GME", "SPY"), src = "yahoo", from = "2019-01-01", to = "2019-12-31")
+
+# Extract adjusted closing prices
+gme_prices <- Cl(GME)
+spy_prices <- Cl(SPY)
+
+# Convert daily prices to end-of-month prices
+gme_monthly <- to.monthly(gme_prices, indexAt = "lastof", OHLC = FALSE)
+spy_monthly <- to.monthly(spy_prices, indexAt = "lastof", OHLC = FALSE)
+
+# Calculate monthly log returns
+gme_monthly_returns <- diff(log(gme_monthly))[, 1]
+spy_monthly_returns <- diff(log(spy_monthly))[, 1]
+
+# Combine monthly returns into a data frame
+monthly_returns <- na.omit(merge(gme_monthly_returns, spy_monthly_returns))
+colnames(monthly_returns) <- c("GME", "SPY")
+
+# Calculate statistics
+# Mean monthly returns
+mean_monthly_returns <- colMeans(monthly_returns)
+
+# Variance of monthly returns
+monthly_variances <- apply(monthly_returns, 2, var)
+
+# Covariance between GME and SPY
+monthly_cov_matrix <- cov(monthly_returns)
+
+# Prepare data for table
+stats_table <- data.frame(
+  Metric = c("Mean Return", "Variance", "Covariance (GME, SPY)"),
+  GME = c(mean_monthly_returns["GME"], monthly_variances["GME"], monthly_cov_matrix["GME", "SPY"]),
+  SPY = c(mean_monthly_returns["SPY"], monthly_variances["SPY"], "")
+)
+
+# Create a table with kable
+kable(stats_table, caption = "Monthly Statistics for GME and SPY (2019)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+In 2019, the mean monthly return for GME was negative, indicating a consistent decline in its stock price over the year. Conversely, the mean monthly return for SPY, which tracks the S&P 500 index, was positive, reflecting the broader market’s growth during the same period. This presents an opportunity to employ a long-short portfolio strategy where GME is shorted to finance a long position in SPY.
+
+By shorting GME, the portfolio capitalizes on its declining value, generating returns as the stock price falls. The proceeds from the short sale are then used to purchase SPY, which benefits from its upward trajectory. This strategy allows the investor to hedge market risk by balancing the short exposure to GME with the long exposure to SPY, leveraging the negative correlation between the assets’ performance. Additionally, shorting GME offsets some volatility from the portfolio, as GME’s variance is higher than SPY’s, while retaining exposure to the stable growth of the index fund.
+
+This approach is particularly effective in scenarios where the underperformance of one asset (GME) is contrasted with the steady performance of a market benchmark (SPY), enabling the portfolio to achieve positive risk-adjusted returns regardless of broader market movements.  With our current data, lets see what the optimal portfolio weights would be for a long-short portfolio with GME and SPY.
+
+```{r}
+# Set up the optimization problem
+Dmat <- 2 * monthly_cov_matrix  # Quadratic term (2x covariance matrix)
+dvec <- rep(0, ncol(monthly_returns))  # Linear term (0 for minimum variance)
+Amat <- rbind(rep(1, ncol(monthly_returns)))  # Only constraint: sum of weights = 1
+bvec <- c(1)  # Right-hand side of constraint
+
+# Run quadratic optimization allowing shorting
+opt_result <- solve.QP(Dmat, dvec, t(Amat), bvec, meq = 1)
+
+# Extract optimal weights
+optimal_weights <- opt_result$solution
+names(optimal_weights) <- colnames(monthly_returns)
+
+# Print results
+cat("Optimal Portfolio Weights (With Short Selling):\n")
+print(optimal_weights)
+
+# Calculate portfolio return and risk
+portfolio_return <- sum(optimal_weights * mean_monthly_returns)
+portfolio_risk <- sqrt(t(optimal_weights) %*% monthly_cov_matrix %*% optimal_weights)
+
+cat("\nPortfolio Return:", portfolio_return, "\n")
+cat("Portfolio Risk (Standard Deviation):", portfolio_risk, "\n")
+```
