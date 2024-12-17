@@ -2,7 +2,9 @@
 title: "Short Selling, Markowitz Portfolio Theory, and the GameStop Saga"
 author: "Ben Cutter & Liam Tolbert"
 date: "12/17/2024"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -105,7 +107,6 @@ cat("Portfolio Risk (Standard Deviation):", portfolio_risk, "\n")
 ```
 
 ```{r}
-
 # Generate random portfolios
 w.GME <- seq(from=-2, to=1, by=.1)
 w.SPY <- 1 - w.GME
@@ -114,6 +115,9 @@ sigma2.p <- (w.GME^2) * monthly_variances["GME"] + (w.SPY^2) * monthly_variances
 sigma.p <- sqrt(sigma2.p)
 
 # Plot efficient frontier
+```
+
+```{r}
 plot(sigma.p, mu.p, type = "b", col = "blue", pch = 16,
      xlab = "Portfolio Risk (Standard Deviation)", 
      ylab = "Portfolio Return", 
@@ -121,3 +125,36 @@ plot(sigma.p, mu.p, type = "b", col = "blue", pch = 16,
      )
 
 ```
+
+```{r}
+# Calculate VaR for each portfolio
+
+VaR <- 100000 * (mu.p + sigma.p * qnorm(0.05))
+
+# Combine into a data frame
+portfolio_table <- data.frame(
+  w.GME = w.GME,
+  w.SPY = w.SPY,
+  Expected_Return = mu.p,
+  Std_Dev = sigma.p,
+  VaR = VaR
+)
+
+# Use kable to format the table
+kable(
+  portfolio_table,
+  col.names = c("Weight (GME)", "Weight (SPY)", "Expected Return", "Standard Deviation", "VaR"),
+  caption = "Portfolio Performance Metrics",
+  digits = 4  # Number of decimal places
+) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+## Discussion
+
+We observe in the table that some portfolios that contained short positions boasted greater returns than their corresponding long positions (e.g. short 1 share vs long 1 share) while also having acceptable risk metrics as well. This analysis shows that: (1) There are some short positions that might have same or greater returns than longing those same securities; and (2) Shorting greater amounts of a security will most likely lead to higher returns than longing the same amounts of that same security. Obviously, this comes with the caveat that historical data is to be trusted, which was notably not the case when the GameStop fiasco occurred. 
+
+### Data Limitations
+It is important to note that the analysis used **monthly data** to estimate portfolio returns and risks. While this approach provides a broader overview of portfolio behavior, it may slightly skew results compared to daily data due to the smoothing effect of aggregation. Monthly data masks intra-month volatility, which could understate risk measures like standard deviation and VaR, particularly for high-frequency trading strategies. Daily data, while offering a more granular view, was excluded for brevity. 
+
+Future analyses could extend this work by incorporating daily data to capture finer nuances of portfolio performance or by exploring dynamic allocation strategies that adapt to changing market conditions.
