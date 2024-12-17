@@ -3,6 +3,7 @@ title: "Short Selling, Markowitz Portfolio Theory, and the GameStop Saga"
 author: "Ben Cutter & Liam Tolbert"
 date: "12/17/2024"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
 ---
@@ -65,8 +66,16 @@ monthly_cov_matrix <- cov(monthly_returns)
 # Prepare data for table
 stats_table <- data.frame(
   Metric = c("Mean Return", "Variance", "Covariance (GME, SPY)"),
-  GME = c(mean_monthly_returns["GME"], monthly_variances["GME"], monthly_cov_matrix["GME", "SPY"]),
-  SPY = c(mean_monthly_returns["SPY"], monthly_variances["SPY"], "")
+  GME = c(
+    round(mean_monthly_returns["GME"], 4), 
+    round(monthly_variances["GME"], 4), 
+    round(monthly_cov_matrix["GME", "SPY"], 6)
+  ),
+  SPY = c(
+    round(mean_monthly_returns["SPY"], 6), 
+    round(monthly_variances["SPY"], 6), 
+    ""  # Empty cell for covariance
+  )
 )
 
 # Create a table with kable
@@ -76,10 +85,13 @@ kable(stats_table, caption = "Monthly Statistics for GME and SPY (2019)") %>%
 
 In 2019, the mean monthly return for GME was negative, indicating a consistent decline in its stock price over the year. Conversely, the mean monthly return for SPY, which tracks the S&P 500 index, was positive, reflecting the broader market’s growth during the same period. This presents an opportunity to employ a long-short portfolio strategy where GME is shorted to finance a long position in SPY.
 
-By shorting GME, the portfolio capitalizes on its declining value, generating returns as the stock price falls. The proceeds from the short sale are then used to purchase SPY, which benefits from its upward trajectory. This strategy allows the investor to hedge market risk by balancing the short exposure to GME with the long exposure to SPY, leveraging the negative correlation between the assets’ performance. Additionally, shorting GME offsets some volatility from the portfolio, as GME’s variance is higher than SPY’s, while retaining exposure to the stable growth of the index fund.
+By shorting GME, the portfolio capitalizes on its declining value, generating returns as the stock price falls. The proceeds from the short sale are then used to purchase SPY, which benefits from its upward trajectory. This strategy allows the investor to hedge market risk by balancing the short exposure to GME with the long exposure to SPY, leveraging the negative correlation between the assets’ performance.
 
-This approach is particularly effective in scenarios where the underperformance of one asset (GME) is contrasted with the steady performance of a market benchmark (SPY), enabling the portfolio to achieve positive risk-adjusted returns regardless of broader market movements.  With our current data, lets see what the optimal portfolio weights would be for a long-short portfolio with GME and SPY.
+This approach is particularly effective in scenarios where the underperformance of one asset (GME) is contrasted with the steady performance of a market benchmark (SPY), enabling the portfolio to achieve positive risk-adjusted returns regardless of broader market movements.
 
+## Markowitz Portfolio Optimization
+
+We'll start by seeing what weights a portfolio would have if we optimized as is:
 ```{r}
 # Set up the optimization problem
 Dmat <- 2 * monthly_cov_matrix  # Quadratic term (2x covariance matrix)
@@ -94,17 +106,79 @@ opt_result <- solve.QP(Dmat, dvec, t(Amat), bvec, meq = 1)
 optimal_weights <- opt_result$solution
 names(optimal_weights) <- colnames(monthly_returns)
 
-# Print results
-cat("Optimal Portfolio Weights (With Short Selling):\n")
-print(optimal_weights)
-
 # Calculate portfolio return and risk
 portfolio_return <- sum(optimal_weights * mean_monthly_returns)
 portfolio_risk <- sqrt(t(optimal_weights) %*% monthly_cov_matrix %*% optimal_weights)
 
-cat("\nPortfolio Return:", portfolio_return, "\n")
-cat("Portfolio Risk (Standard Deviation):", portfolio_risk, "\n")
+# Convert weights to percentages
+optimal_weights_percent <- optimal_weights * 100
+
+# Prepare results in a data frame
+results_table <- data.frame(
+  Metric = c("Optimal Weight (GME)", "Optimal Weight (SPY)", 
+             "Portfolio Return", "Portfolio Risk (Std Dev)"),
+  Value = c(paste0(round(optimal_weights_percent[1], 2), "%"),
+            paste0(round(optimal_weights_percent[2], 2), "%"),
+            round(portfolio_return, 4),
+            round(portfolio_risk, 4))
+)
+
+# Display the table using kable
+kable(results_table, caption = "Optimal Portfolio Weights, Return, and Risk") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
 ```
+
+In this case, the optimal portfolio ended up being a 4% investment in GME and a 96% investment in SPY.  We had hoped that the portfolio would organically short GME to demonstrate the value of shorting in a portfolio, but since the objective function seeks to minimize variance, it makes sense that the portfolio would be heavily weighted towards the less volatile SPY.
+
+We'll now attempt to coerce the portfolio into shorting to achieve a higher return, which we can achieve by creating a constraint for a minimum portfolio return of 10%.
+
+```{r}
+# Add minimum portfolio return constraint (0.1)
+target_return <- 0.1  # Minimum portfolio return
+
+Amat_2 <- rbind(
+  rep(1, ncol(monthly_returns)),  # Sum of weights = 1
+  mean_monthly_returns            # Portfolio return >= target
+)
+bvec_2 <- c(1, target_return)     # Constraints RHS: sum = 1, return >= 0.1
+
+# Run quadratic optimization with new constraint
+opt_result_2 <- solve.QP(Dmat, dvec, t(Amat_2), bvec_2, meq = 1)
+
+# Extract optimal weights for the second portfolio
+optimal_weights_2 <- opt_result_2$solution
+names(optimal_weights_2) <- colnames(monthly_returns)
+
+# Calculate portfolio return and risk
+portfolio_return_2 <- sum(optimal_weights_2 * mean_monthly_returns)
+portfolio_risk_2 <- sqrt(t(optimal_weights_2) %*% monthly_cov_matrix %*% optimal_weights_2)
+
+# --- Combine Results into Tables ---
+
+# Convert weights to percentages
+optimal_weights_percent_1 <- optimal_weights * 100
+optimal_weights_percent_2 <- optimal_weights_2 * 100
+
+# Combine results for both portfolios
+results_table <- data.frame(
+  Metric = c("Optimal Weight (GME)", "Optimal Weight (SPY)", 
+             "Portfolio Return", "Portfolio Risk (Std Dev)"),
+  Unconstrained = c(paste0(round(optimal_weights_percent[1], 2), "%"),
+                    paste0(round(optimal_weights_percent[2], 2), "%"),
+                    round(portfolio_return, 4),
+                    round(portfolio_risk, 4)),
+  MinReturn_0.1 = c(paste0(round(optimal_weights_percent_2[1], 2), "%"),
+                    paste0(round(optimal_weights_percent_2[2], 2), "%"),
+                    round(portfolio_return_2, 4),
+                    round(portfolio_risk_2, 4))
+)
+
+# --- Display Results Using Kable ---
+kable(results_table, caption = "Comparison of Unconstrained and Minimum Return Portfolios") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+By adding this constraint, we can see the impact that shorting can have on a portfolio's return.  Since our objective function is focused on minimizing variance, the portfolio stops directly on the constraint boundary, since we can't reach this return without introducing more risk to the portfolio.  Next, we'll look at the efficient frontier for this portfolio, which can help us better understand the relationship between risk and return.
 
 ```{r}
 # Generate random portfolios
@@ -115,9 +189,6 @@ sigma2.p <- (w.GME^2) * monthly_variances["GME"] + (w.SPY^2) * monthly_variances
 sigma.p <- sqrt(sigma2.p)
 
 # Plot efficient frontier
-```
-
-```{r}
 plot(sigma.p, mu.p, type = "b", col = "blue", pch = 16,
      xlab = "Portfolio Risk (Standard Deviation)", 
      ylab = "Portfolio Return", 
@@ -126,6 +197,10 @@ plot(sigma.p, mu.p, type = "b", col = "blue", pch = 16,
 
 ```
 
+Using the Efficient frontier, we can see the linear relationship that forms on the upper half of the frontier. This represents the effects of shorting.  In our case, we are cutting off the short at 200%, but you could continue to increase your returns by continuing to short more GME and invest in SPY.  However, this doesn't come without a cost, as your risk continues to increase.  In fact, this relationship demonstrates a danger of shorting: exposing yourself to unlimited risk.  We've now established the temptation of higher returns through shorting that can position investors as targets for short squeezes, like the one that occurred with GameStop.
+
+## Risk Introduced through Short Selling
+We will now use Value at Risk to see what the potential loss could be for the portfolio.  We will use a 5% confidence interval and a $100,000 investment to see what the potential loss could be.
 ```{r}
 # Calculate VaR for each portfolio
 
@@ -137,7 +212,7 @@ portfolio_table <- data.frame(
   w.SPY = w.SPY,
   Expected_Return = mu.p,
   Std_Dev = sigma.p,
-  VaR = VaR
+  VaR = paste0("$", formatC(round(VaR, 2), format = "f", big.mark = ",", digits = 2))
 )
 
 # Use kable to format the table
@@ -150,11 +225,127 @@ kable(
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
 ```
 
-## Discussion
+We observe in the table that some portfolios that contained short positions boasted greater returns than their corresponding long positions (e.g. short 1 share vs long 1 share) while also having acceptable risk metrics as well. This analysis shows that: (1) There are some short positions that might have same or greater returns than longing those same securities; and (2) Shorting greater amounts of a security will most likely lead to higher returns than longing the same amounts of that same security. Obviously, this comes with the caveat that historical data is to be trusted, which was notably not the case when the GameStop fiasco occurred.
 
-We observe in the table that some portfolios that contained short positions boasted greater returns than their corresponding long positions (e.g. short 1 share vs long 1 share) while also having acceptable risk metrics as well. This analysis shows that: (1) There are some short positions that might have same or greater returns than longing those same securities; and (2) Shorting greater amounts of a security will most likely lead to higher returns than longing the same amounts of that same security. Obviously, this comes with the caveat that historical data is to be trusted, which was notably not the case when the GameStop fiasco occurred. 
+```{r}
+# create a plot of w.GME and VaR
+plot(w.GME, VaR, type = "b", col = "blue", pch = 16,
+     xlab = "Weight in GME", 
+     ylab = "Value at Risk", 
+     main = "Value at Risk vs GME Weight"
+     )
+
+```
+As our VaR increases its short in GME, we can see the potential loss decreasing.  Likely as expected, if we have all of our portfolio in SPY, we assume the least risk of loss.  Once again, if we were to expand the data past 200% short in GME, we would see the VaR continue to decrease, putting an investor in a very dangerous position.  
+
 
 ### Data Limitations
-It is important to note that the analysis used **monthly data** to estimate portfolio returns and risks. While this approach provides a broader overview of portfolio behavior, it may slightly skew results compared to daily data due to the smoothing effect of aggregation. Monthly data masks intra-month volatility, which could understate risk measures like standard deviation and VaR, particularly for high-frequency trading strategies. Daily data, while offering a more granular view, was excluded for brevity. 
+It is important to note that the analysis used **monthly data** to estimate portfolio returns and risks. While this approach provides a broader overview of portfolio behavior, it may slightly skew results compared to daily data due to the smoothing effect of aggregation. Monthly data masks intra-month volatility, which could understate risk measures like standard deviation and VaR, particularly for high-frequency trading strategies. Daily data, while offering a more granular view, was excluded for brevity. Additionally, short interest was omitted from this investigation, which would reduce the returns of our short positions.
 
+## What Came Next: The GameStop Short Squeeze
+To this point, we've built up a clear picture of why an investor could be enticed into aggressively shorting a stock like GME, and how this can put them in a risky position.  We'll now look at the stock price of GME in subsequent year.
+
+```{r}
+# Fetch GME stock data from Yahoo Finance
+getSymbols("GME", src = "yahoo", from = "2020-01-01", to = "2022-12-31", auto.assign = TRUE)
+gme_prices_historical <- Cl(GME)  # Extract adjusted close prices
+gme_data_historical <- data.frame(Date = index(gme_prices_historical), Price = coredata(gme_prices_historical))
+
+# Create a line plot using ggplot2
+ggplot(gme_data_historical, aes(x = Date, y = GME.Close)) +
+  geom_line(color = "blue") +
+  labs(title = "GME Stock Price (Jan 2020 - Dec 2022)",
+       x = "Date",
+       y = "Price (USD)") +
+  theme_minimal()
+```
+As we can see, the stock price of GME took a high leap as investors jumped into the short squeeze of GME, inspired by a grassroots movement to squeeze the short positions (note: we chose to use our portfolio data from 2019 because the short positions were in place for some time before the squeeze occured).  This resulted in a massive loss for short sellers, and a massive gain for those who were able to get out of their short positions in time.  This is a clear example of the risks that short selling can bring to a portfolio, and the potential for unlimited loss.
+
+```{r}
+
+# Set the initial investment and weights
+initial_investment <- 100000
+weights_portfolio1 <- optimal_weights  # Weights for portfolio 1
+weights_portfolio2 <- optimal_weights_2  # Adjusted weights for portfolio 2
+
+# Fetch stock price data from January 1, 2020 to December 31, 2022
+getSymbols(c("GME", "SPY"), src = "yahoo", from = "2020-01-01", to = "2022-12-31")
+
+# Extract closing prices
+gme_prices <- Cl(GME)
+spy_prices <- Cl(SPY)
+
+# Combine prices into one data frame
+prices <- merge(gme_prices, spy_prices)
+colnames(prices) <- c("GME", "SPY")
+
+# Get initial prices on January 1, 2020
+initial_prices <- prices["2020-01-02", ]
+initial_gme_price <- as.numeric(initial_prices$GME)
+initial_spy_price <- as.numeric(initial_prices$SPY)
+
+# Calculate the number of shares for each stock in both portfolios
+shares_portfolio1 <- (initial_investment * weights_portfolio1) / c(initial_gme_price, initial_spy_price)
+shares_portfolio2 <- (initial_investment * weights_portfolio2) / c(initial_gme_price, initial_spy_price)
+
+# Function to calculate portfolio value over time
+calculate_portfolio_value <- function(prices, shares) {
+  daily_value <- prices %*% shares  # Matrix multiplication of prices and shares
+  return(daily_value)
+}
+
+# Calculate daily portfolio values
+portfolio1_values <- calculate_portfolio_value(prices, shares_portfolio1)
+portfolio2_values <- calculate_portfolio_value(prices, shares_portfolio2)
+
+# Combine portfolio values into a single data frame
+portfolio_values <- data.frame(
+  Date = index(prices),
+  Portfolio1 = portfolio1_values,
+  Portfolio2 = portfolio2_values
+)
+
+# Combine initial prices and shares into a table
+initial_table <- data.frame(
+  Metric = c("Initial Share Price (USD)", "Shares in Portfolio 1", "Shares in Portfolio 2"),
+  GME = c(paste0("$", formatC(round(initial_gme_price, 2), format = "f", big.mark = ",", digits = 2)), round(shares_portfolio1[1], 2), round(shares_portfolio2[1], 2)),
+  SPY = c(paste0("$", formatC(round(initial_spy_price, 2), format = "f", big.mark = ",", digits = 2)), round(shares_portfolio1[2], 2), round(shares_portfolio2[2], 2))
+)
+
+# Display initial shares and prices using kable
+kable(initial_table, caption = "Initial Share Prices and Shares for Each Portfolio") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+```
+
+In the above table, we can see the initial share prices and numbers in our two portfolios we created earlier: Portfolio one prioritizes minimizing variance, while Portfolio two prioritizes a minimum return of 10%.  We can see that the number of shares in Portfolio 2 is significantly lower than Portfolio 1, as the constraint of a minimum return of 10% forced the portfolio to take on more risk.  Let's look at how these portfolio values changed over the GME short squeeze:
+
+```{r}
+ggplot(portfolio_values, aes(x = Date)) +
+  geom_line(aes(y = Portfolio1, color = "Portfolio 1")) +
+  geom_line(aes(y = Portfolio2, color = "Portfolio 2")) +
+  scale_color_manual(values = c("Portfolio 1" = "green", "Portfolio 2" = "red")) +
+  labs(title = "Portfolio Values Over Time",
+       x = "Date",
+       y = "Portfolio Value (USD)",
+       color = "Portfolios") +
+  theme_minimal()
+```
+
+As expected, Portfolio 1 saw slightly increasing, constant returns over the period, while Portfolio 2 saw a sharp decline in value as the short squeeze took place.  This is a clear example of the risks that short selling can bring to a portfolio, and the potential for unlimited loss.  This model is admittedly incredibly naive, and it doesn't account for portfolio rebalancing, average time a short position is held, or the cost of borrowing shares to short.  However, it does provide a simplistic example of the risks that short selling can bring to a portfolio, and what can happen when a short squeeze occurs.
+
+### Next Steps
 Future analyses could extend this work by incorporating daily data to capture finer nuances of portfolio performance or by exploring dynamic allocation strategies that adapt to changing market conditions.
+
+## Short Selling and Ethics
+Short selling has long been a controversial practice in financial markets, with critics arguing that it can exacerbate market volatility and lead to predatory behavior. The GameStop short squeeze highlighted the potential risks associated with short selling, as retail investors banded together to drive up the stock price and force short sellers to cover their positions at significant losses.
+
+Historically, short positions have been opaque, which not only creates black-box, hard to regulate strategies, but also created some challenges for us in finding data on short selling.  In recent years, the in recent years, FINRA has begun to publicly post short Sale volume data, as can be seen here (https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data).  This increased transparency can help regulators and investors better understand short selling activity and its impact on the market.
+
+## Conclusion
+While our investigation into Short Selling and Portfolio optimization was simplistic, it allowed us to practice applying some of the concepts we learned in class to real world data.  Learning how to create Markowitz Portfolio inputs from real world data has helped to understand how we could go out and make our own portfolio optimization, tying back the toy examples in class to real data.  
+
+## References
+We used Eric Zivot's "Introduction to Computational Finance and Financial Econometrics" as a reference for this project (https://bookdown.org/compfinezbook/introFinRbook/Introduction-to-Portfolio-Theory.html).  In particular, Chapter 11 provided guidance for portfolio creation, creating an efficient frontier, and calculating Value at Risk.
+
+We also used the quantmod to get historical data from Yahoo finance.
+
